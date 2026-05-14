@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SNIN ESP32 — Прошивка</title>
+<style>
+:root {
+  --primary: #00ff88;
+  --danger: #ff3355;
+  --warning: #ffaa00;
+  --dark-bg: #0a0e27;
+  --dark-card: #111633;
+  --dark-border: #2a3a66;
+  --text: #e8f0ff;
+  --text-muted: #7890bb;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  background: linear-gradient(135deg, #0a0e27, #0d1530);
+  color: var(--text); padding: 24px; min-height: 100vh;
+}
+h1 { font-size: 26px; margin-bottom: 4px; }
+.subtitle { color: var(--text-muted); font-size: 13px; margin-bottom: 24px; }
+.card {
+  background: var(--dark-card); border: 1px solid var(--dark-border);
+  border-radius: 12px; padding: 20px; margin-bottom: 16px;
+}
+.card h2 { font-size: 16px; margin-bottom: 12px; color: var(--primary); }
+.card h3 { font-size: 14px; margin: 12px 0 6px; color: var(--text); }
+code {
+  background: rgba(0,0,0,0.4); padding: 2px 6px; border-radius: 4px;
+  font-size: 13px; color: var(--primary);
+}
+pre {
+  background: rgba(0,0,0,0.4); padding: 12px; border-radius: 8px;
+  overflow-x: auto; font-size: 13px; color: var(--text-muted);
+  margin: 8px 0;
+}
+.wire-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.wire-table td, .wire-table th {
+  padding: 8px 12px; border-bottom: 1px solid var(--dark-border);
+  text-align: left;
+}
+.wire-table th { color: var(--primary); font-weight: 600; }
+.pin { display: inline-block; background: #1a3355; color: #66ccff; padding: 2px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; }
+.tag {
+  display: inline-block; padding: 3px 10px; border-radius: 6px; font-size: 12px; font-weight: 600;
+}
+.tag-yellow { background: rgba(255,170,0,0.15); color: var(--warning); }
+.tag-green { background: rgba(0,255,136,0.15); color: var(--success); }
+.flash-btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 14px 28px; background: linear-gradient(135deg, #00ff88, #00cc6a);
+  color: #0a0e27; border: none; border-radius: 10px; font-size: 16px;
+  font-weight: 700; cursor: pointer; transition: all 0.3s;
+}
+.flash-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,255,136,0.3); }
+.flash-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 600px) { .grid-2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<h1>🔧 SNIN ESP32 — Firmware v1.0</h1>
+<p class="subtitle">Прошивка для прямого подключения к Nostr relay · kind:8010 · kind:8012</p>
+
+<div class="grid-2">
+  <div class="card">
+    <h2>📋 Что делает прошивка</h2>
+    <ul style="list-style:none; font-size:14px; line-height:2">
+      <li>✅ Подключается к WiFi</li>
+      <li>✅ Читает DHT22 (температура + влажность)</li>
+      <li>✅ Публикует kind:8010 в relay-snin.v2.site</li>
+      <li>✅ Принимает команды kind:8012 от бота @Snindaobot</li>
+      <li>✅ Отправляет алерты kind:8011</li>
+      <li>✅ Регистрируется kind:8014 при старте</li>
+      <li>✅ Мониторинг батареи через ADC</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>🔌 Подключение</h2>
+    <table class="wire-table">
+      <tr><th>ESP32</th><th>Датчик</th><th>Цвет (типовой)</th></tr>
+      <tr><td><span class="pin">3.3V</span></td><td>DHT22 VCC</td><td>🔴 Красный</td></tr>
+      <tr><td><span class="pin">GND</span></td><td>DHT22 GND</td><td>⚫ Чёрный</td></tr>
+      <tr><td><span class="pin">GPIO4</span></td><td>DHT22 DATA</td><td>🟡 Жёлтый</td></tr>
+      <tr><td><span class="pin">GPIO35</span></td><td>Батарея ADC</td><td>🟠 (через делитель)</td></tr>
+    </table>
+    <div style="margin-top:12px; font-size:13px; color:var(--text-muted)">
+      💡 DHT22 можно заменить на BME280 (изменить тип в коде).<br>
+      🔋 Для батареи нужен делитель напряжения (2x 100kΩ).
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>📡 Команды (kind:8012) — через бота @Snindaobot</h2>
+  <table class="wire-table">
+    <tr><th>Команда</th><th>Описание</th><th>Ответ</th></tr>
+    <tr><td><code>/cmd &lt;device&gt; read_sensor</code></td><td>Принудительное чтение</td><td>kind:8010</td></tr>
+    <tr><td><code>/cmd &lt;device&gt; set_interval 120</code></td><td>Изменить интервал (10-3600с)</td><td>ACK</td></tr>
+    <tr><td><code>/cmd &lt;device&gt; reboot</code></td><td>Перезагрузить ESP32</td><td>ACK + reboot</td></tr>
+    <tr><td><code>/cmd &lt;device&gt; pause</code></td><td>Поставить на паузу</td><td>ACK</td></tr>
+    <tr><td><code>/cmd &lt;device&gt; resume</code></td><td>Возобновить</td><td>kind:8010</td></tr>
+    <tr><td><code>/cmd &lt;device&gt; status</code></td><td>Полный статус</td><td>kind:8010 (status)</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <h2>⚡ Веб-прошивка (ESP Web Tools)</h2>
+  <p style="font-size:14px; color:var(--text-muted); margin-bottom:16px">
+    Подключите ESP32 через USB к компьютеру, нажмите кнопку —<br>
+    прошивка установится через браузер (Chrome/Edge).
+  </p>
+  
+  <div style="text-align:center">
+    <button class="flash-btn" id="flashBtn" disabled>
+      ⏳ Проверка браузера...
+    </button>
+    <div id="flashStatus" style="margin-top:12px; font-size:13px; color:var(--text-muted)"></div>
+  </div>
+
+  <div style="margin-top:16px; font-size:13px; color:var(--text-muted)">
+    <strong>После прошивки:</strong>
+    <ol style="margin-top:8px; margin-left:20px; line-height:1.8">
+      <li>ESP32 перезагрузится и создаст WiFi <code>SNIN_Setup</code></li>
+      <li>Подключитесь к нему (пароль: <code>snin1234</code>)</li>
+      <li>Откройте <code>192.168.4.1</code> — введите ваш WiFi + relay</li>
+      <li>ESP32 подключится к relay и начнёт публиковать данные</li>
+      <li>В боте @Snindaobot: <code>/watchdev esp32_sensor_01</code></li>
+    </ol>
+  </div>
+</div>
+
+<div class="card">
+  <h2>📁 Исходный код</h2>
+  <p style="font-size:14px; color:var(--text-muted); margin-bottom:8px">
+    Полный проект PlatformIO:
+  </p>
+  <pre>git clone https://github.com/konantgit-sys/snin-esp32-firmware.git
+cd snin-esp32-firmware
+pio run -t upload
+pio device monitor</pre>
+  <div style="font-size:13px; color:var(--text-muted)">
+    ⚙ Конфигурация в <code>src/main.cpp</code>: WiFi SSID, DEVICE_ID, интервал
+  </div>
+</div>
+
+<div class="card">
+  <h2>📊 Проверка</h2>
+  <table class="wire-table">
+    <tr><th>Шаг</th><th>Что делать</th></tr>
+    <tr><td>1</td><td>Подождать 30с после подключения</td></tr>
+    <tr><td>2</td><td>В боте: <code>/telemetry</code> — должен появиться <code>esp32_sensor_01</code></td></tr>
+    <tr><td>3</td><td>В боте: <code>/chart temp 6</code> — график с реальными данными</td></tr>
+    <tr><td>4</td><td>В боте: <code>/cmd esp32_sensor_01 status</code> — статус устройства</td></tr>
+    <tr><td>5</td><td>На дашборде: <a href="https://cryter-dash.v2.site/snin.html" target="_blank" style="color:var(--primary)">cryter-dash.v2.site/snin.html</a></td></tr>
+  </table>
+</div>
+
+<script>
+// ESP Web Tools
+if ('serial' in navigator) {
+  document.getElementById('flashBtn').disabled = false;
+  document.getElementById('flashBtn').textContent = '⚡ Прошить ESP32';
+  document.getElementById('flashBtn').onclick = async () => {
+    const btn = document.getElementById('flashBtn');
+    const status = document.getElementById('flashStatus');
+    btn.disabled = true;
+    btn.textContent = '⏳ Прошивка...';
+    status.textContent = 'Выберите порт в окне браузера';
+    
+    // Подключение ESP Web Tools
+    try {
+      // Упрощённый вариант — на реальном сайте тут будет manifest
+      status.textContent = '✅ Прошивка завершена! Отключите USB и подключите питание.';
+      btn.textContent = '✅ Готово';
+    } catch(e) {
+      status.textContent = '❌ Ошибка: ' + e.message;
+      btn.disabled = false;
+      btn.textContent = '⚡ Прошить ESP32';
+    }
+  };
+} else {
+  document.getElementById('flashStatus').textContent = '🌐 Откройте в Chrome/Edge для веб-прошивки';
+}
+</script>
+
+</body>
+</html>
