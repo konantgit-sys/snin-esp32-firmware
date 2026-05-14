@@ -1,69 +1,185 @@
-# SNIN ESP32 Firmware
+# SNIN ESP32 Firmware v1.0
 
 Прошивка для ESP32 — прямое подключение к Nostr relay. Публикует телеметрию с DHT22 (kind:8010), получает команды (kind:8012) от бота @Snindaobot.
 
+```
+ESP32 (DHT22) ──WiFi/WSS──→ Relay ──poll──→ @Snindaobot ──→ Telegram
+                                ↑
+                          ┌─────┴──────┐
+                          │ /chart     │
+                          │ /telemetry │
+                          │ /cmd       │
+                          └────────────┘
+```
+
 ## Возможности
 
-- ✅ WiFi + WebSocket (WSS) → relay-snin.v2.site
-- ✅ DHT22: температура + влажность
-- ✅ Публикация kind:8010 каждые N секунд
-- ✅ Приём команд kind:8012 (read_sensor, reboot, pause, set_interval, status)
-- ✅ Алерты kind:8011 при ошибках датчика
-- ✅ Регистрация kind:8014 при старте
-- ✅ Мониторинг батареи через ADC
+| Функция | Статус | kind |
+|---------|--------|------|
+| WiFi + WSS → relay | ✅ | — |
+| DHT22 temp + hum | ✅ | — |
+| Публикация телеметрии | ✅ | 8010 |
+| Приём команд | ✅ | 8012 |
+| Алерты при ошибках | ✅ | 8011 |
+| Регистрация при старте | ✅ | 8014 |
+| ADC батарея | ✅ | — |
+| ESP-NOW mesh | ⏳ v1.1 | — |
+| LoRa | ⏳ v1.1 | — |
+| GPS трекер | ⏳ v1.1 | 8015 |
 
-## Установка
+## Быстрый старт
 
-### PlatformIO
+### 1. Собрать схему
+
+| ESP32 | DHT22 |
+|-------|-------|
+| 3.3V  | VCC   |
+| GND   | GND   |
+| GPIO4 | DATA  |
+
+### 2. Настроить
+
+Отредактировать `src/main.cpp`:
+
+```cpp
+const char* WIFI_SSID     = "YOUR_WIFI";
+const char* WIFI_PASS     = "YOUR_PASSWORD";
+const char* DEVICE_ID     = "esp32_sensor_01";
+uint32_t   MEASURE_INTERVAL = 60;   // секунд между публикациями
+```
+
+### 3. Прошить
 
 ```bash
-git clone https://github.com/konantgit-sys/snin-esp32-firmware
-cd snin-esp32-firmware
-# Отредактируйте src/main.cpp: WiFi SSID, DEVICE_ID
+# PlatformIO
 pio run -t upload
 pio device monitor
 ```
 
-### Веб-прошивка (Chrome/Edge)
+### 4. Проверить
 
-1. Откройте https://relay-snin.v2.site/firmware
-2. Подключите ESP32 через USB
-3. Нажмите "Прошить"
-4. Подключитесь к WiFi `SNIN_Setup`, откройте 192.168.4.1
-5. Введите ваш WiFi + настройки relay
+После загрузки ESP32:
+1. Подключается к WiFi
+2. Регистрируется в relay (kind:8014)
+3. Начинает публиковать kind:8010 каждые 60с
+4. В боте @Snindaobot: `/telemetry` — увидите устройство
+5. `/chart temp 6` — график температуры
 
-## Команды через бота
+## Команды
 
-После подключения устройство появится в @Snindaobot.
+### Telegram → ESP32 (/cmd в @Snindaobot)
+
+| Команда | Действие ESP32 | Ответ |
+|---------|---------------|-------|
+| `/cmd <device> read_sensor` | Принудительное чтение DHT22 | kind:8010 |
+| `/cmd <device> set_interval 120` | Сменить интервал (10-3600с) | ACK |
+| `/cmd <device> reboot` | Перезагрузка ESP32 | ACK + reboot |
+| `/cmd <device> pause` | Пауза публикаций | ACK |
+| `/cmd <device> resume` | Возобновить | kind:8010 |
+| `/cmd <device> status` | Полный статус | kind:8010 (status) |
+
+### Telegram → Дашборд
+
+| Команда | Что покажет |
+|---------|------------|
+| `/telemetry` | Все устройства и их показания |
+| `/chart temp 24` | График температуры/влажности/батареи |
+| `/chart alerts 24` | Гистограмма алертов |
+| `/watch esp32_sensor_01` | Push-уведомления об алертах |
+
+## Протокол NIP-80
+
+Прошивка использует Nostr kinds: 8010–8017.
+
+### kind:8010 — Telemetry
+```json
+{
+  "temp": 23.5,
+  "hum": 60.2,
+  "battery": 85
+}
+```
+
+### kind:8012 — Command
+```json
+// Запрос (от бота)
+{"action": "read_sensor"}
+
+// Ответ (от ESP32)
+{"action": "read_sensor", "ok": true, "result": "sensor read triggered"}
+```
+
+### kind:8011 — Alert
+```json
+{"alert": "sensor_fail", "msg": "DHT read error", "ts": 1778728000}
+```
+
+## Архитектура связи
 
 ```
-/cmd esp32_sensor_01 read_sensor    # принудительное чтение
-/cmd esp32_sensor_01 set_interval 120  # изменить интервал
-/cmd esp32_sensor_01 status         # полный статус
-/cmd esp32_sensor_01 reboot         # перезагрузить
-/cmd esp32_sensor_01 pause          # пауза
-/cmd esp32_sensor_01 resume         # возобновить
+┌──────────────────────────────────────────────────────┐
+│                    ESP32                              │
+│  ┌─────────┐   ┌──────────┐   ┌──────────────────┐   │
+│  │ DHT22   │→  │ main.cpp │→  │ WebSocketClient  │   │
+│  │ GPIO4   │   │ 480строк  │   │ WSS → relay      │   │
+│  └─────────┘   └────┬─────┘   └──────────────────┘   │
+│                     │                                  │
+│              ┌──────┴──────┐                          │
+│              │ kind:8010   │                          │
+│              │ kind:8011   │                          │
+│              │ kind:8014   │                          │
+│              └──────┬──────┘                          │
+└─────────────────────┼────────────────────────────────┘
+                      │ WSS
+               ┌──────┴──────┐
+               │  Relay V2   │
+               │ relay-snin  │
+               └──────┬──────┘
+                      │ HTTP poll (20s)
+               ┌──────┴──────┐
+               │ @Snindaobot │
+               │ bot.py      │
+               └──────┬──────┘
+                      │ Telegram
+                      ▼
+                 Пользователь
 ```
 
-## Подключение
+## Структура проекта
 
-| ESP32  | DHT22 |
-|--------|-------|
-| 3.3V   | VCC   |
-| GND    | GND   |
-| GPIO4  | DATA  |
+```
+snin-esp32-firmware/
+├── platformio.ini       # 3 среды: esp32dev, esp32-s3, esp8266
+├── README.md            # Этот файл
+├── ARCHITECTURE.md      # Полная архитектура
+├── src/
+│   └── main.cpp         # Прошивка (480 строк)
+│       ├── setup()      # WiFi + WSS connect
+│       ├── loop()       # publish + command check
+│       ├── publishTelemetry()   # kind:8010
+│       ├── subscribeCommands()  # kind:8012 filter
+│       ├── handleCommand()      # 6 команд
+│       └── snedAlert()          # kind:8011
+└── firmware.html        # Веб-страница прошивки
+```
 
-## Стек
+## Зависимости
 
-- ESP32 Arduino (PlatformIO)
-- WiFi + WebSocketsClient
-- ArduinoJson v7
-- DHT sensor library
-- Nostr NIP-80 (kind:8010–8017)
+- **Платформа:** ESP32 (WROOM / S3)
+- **Фреймворк:** Arduino (PlatformIO)
+- **Библиотеки:**
+  - `bblanchon/ArduinoJson @ ^7.0.3`
+  - `adafruit/DHT sensor library @ ^1.4.6`
+  - `links2004/WebSockets @ ^2.4.1`
 
-## См. также
+## Ссылки
 
-- [NIP-80 спецификация](https://github.com/konantgit-sys/snin/blob/main/nip-80-snin.md)
 - [SNIN Network](https://snin-network.v2.site)
-- [SNIN Telegram Bot](https://t.me/Snindaobot)
+- [Документация прошивки](https://relay-snin.v2.site/firmware)
+- [NIP-80 спецификация](https://github.com/konantgit-sys/snin/blob/main/nip-80-snin.md)
+- [Telegram Bot @Snindaobot](https://t.me/Snindaobot)
 - [Дашборд](https://cryter-dash.v2.site/snin.html)
+
+## Лицензия
+
+MIT — см. [LICENSE](LICENSE)
